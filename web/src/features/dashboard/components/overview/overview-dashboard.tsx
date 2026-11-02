@@ -627,7 +627,7 @@ export function OverviewDashboard() {
     }
   }
 
-  return (
+  return false && (
     <SectionPageLayout>
       <SectionPageLayout.Title>{t('Overview')}</SectionPageLayout.Title>
       <SectionPageLayout.Actions>

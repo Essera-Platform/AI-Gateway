@@ -28,7 +28,9 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 import { getLobeIcon } from '@/lib/lobe-icon'
+import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   ENDPOINT_TYPES,
@@ -152,6 +154,7 @@ export const PricingSidebar = memo(function PricingSidebar(
   props: PricingSidebarProps
 ) {
   const { t } = useTranslation()
+  const isSuperAdmin = useAuthStore.getState().auth.user?.role === ROLE.SUPER_ADMIN
   const counts = useMemo(() => {
     const vendors = new Map<string, number>()
     const tags = new Map<string, number>()
@@ -209,7 +212,7 @@ export const PricingSidebar = memo(function PricingSidebar(
     ...props.groups.map((group) => ({
       value: group,
       label: group,
-      suffix: formatGroupRatio(props.groupRatios?.[group]),
+      suffix: isSuperAdmin ? formatGroupRatio(props.groupRatios?.[group]) : undefined,
     })),
   ]
 

@@ -35,7 +35,9 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { useMediaQuery } from '@/hooks'
+import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   AUTO_GROUP_FRAME_CLASS_NAME,
@@ -75,9 +77,10 @@ export function ApiKeyGroupCombobox({
   const filteredOptions = useMemo(() => {
     const search = searchValue.trim().toLowerCase()
     if (!search) return options
+    const isSuperAdmin = useAuthStore.getState().auth.user?.role === ROLE.SUPER_ADMIN
 
     return options.filter((option) => {
-      const ratioText = String(option.ratio ?? '').toLowerCase()
+      const ratioText = isSuperAdmin ? String(option.ratio ?? '').toLowerCase() : ''
       return (
         option.value.toLowerCase().includes(search) ||
         option.label.toLowerCase().includes(search) ||

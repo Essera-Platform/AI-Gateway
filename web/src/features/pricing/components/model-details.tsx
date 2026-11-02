@@ -59,6 +59,8 @@ import { PluginIcon } from '@/features/task-plugins/components/plugin-icon'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
+import { ROLE } from '@/lib/roles'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { DEFAULT_TOKEN_UNIT } from '../constants'
@@ -1055,6 +1057,7 @@ function ProviderGroupPricingSection(
   props: GroupPricingSectionProps & { hideTitle?: boolean }
 ) {
   const { t, i18n } = useTranslation()
+  const isSuperAdmin = useAuthStore.getState().auth.user?.role === ROLE.SUPER_ADMIN
   const showRechargePrice = props.showRechargePrice ?? false
 
   const availableGroups = useMemo(
@@ -1199,9 +1202,11 @@ function ProviderGroupPricingSection(
               <div key={group} className='overflow-hidden rounded-lg border'>
                 <div className='bg-muted/20 flex items-center justify-between gap-3 border-b px-3 py-2'>
                   <GroupBadge group={group} size='sm' />
+                  {isSuperAdmin && (
                   <span className='text-muted-foreground font-mono text-xs'>
                     {ratio}x
                   </span>
+                  )}
                 </div>
                 <StaticDataTable
                   className='rounded-none border-0'
@@ -1391,13 +1396,19 @@ function ProviderGroupPricingSection(
             cellClassName: 'py-2.5',
             cell: (group) => <GroupBadge group={group} size='sm' />,
           },
-          {
-            id: 'ratio',
-            header: t('Ratio'),
-            className: thClass,
-            cellClassName: 'text-muted-foreground py-2.5 font-mono',
-            cell: (group) => `${props.groupRatio[group] || 1}x`,
-          },
+          ...(isSuperAdmin
+            ? [
+                {
+                  id: 'ratio',
+                  header: t('Ratio'),
+                  className: thClass,
+                  cellClassName:
+                    'text-muted-foreground py-2.5 font-mono',
+                  cell: (group: string) =>
+                    `${props.groupRatio[group] || 1}x`,
+                },
+              ]
+            : []),
           ...(isTokenBased
             ? [
                 {

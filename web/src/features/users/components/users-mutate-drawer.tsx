@@ -550,7 +550,7 @@ export function UsersMutateDrawer({
                 )}
 
               {/* Binding Information (Read-only) */}
-              {isUpdate && (
+              {false && isUpdate && (
                 <SideDrawerSection>
                   <h3 className='text-sm font-medium'>
                     {t('Binding Information')}

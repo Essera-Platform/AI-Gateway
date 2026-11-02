@@ -288,18 +288,18 @@ export function DataTableRowActions<TData>({
           </DropdownMenuSub>
         )}
         <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={() => {
-            setCurrentRow(apiKey)
-            setOpen('delete')
-          }}
-          className='text-destructive focus:text-destructive'
-        >
-          {t('Delete')}
-          <DropdownMenuShortcut>
-            <Trash2 size={16} />
-          </DropdownMenuShortcut>
-        </DropdownMenuItem>
+          {false && <DropdownMenuItem
+              onClick={() => {
+                  setCurrentRow(apiKey)
+                  setOpen('delete')
+              }}
+              className='text-destructive focus:text-destructive'
+          >
+              {t('Delete')}
+              <DropdownMenuShortcut>
+                  <Trash2 size={16}/>
+              </DropdownMenuShortcut>
+          </DropdownMenuItem>}
       </DataTableRowActionMenu>
     </div>
   )

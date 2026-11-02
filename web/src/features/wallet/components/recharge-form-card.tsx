@@ -197,10 +197,11 @@ export function RechargeFormCard({
   return (
     <TitledCard
       title={t('Add Funds')}
-      description={t('Choose an amount and payment method')}
+      //description={t('Choose an amount and payment method')}
       icon={<WalletCards className='h-4 w-4' />}
       iconTone='success'
       disableHoverEffect
+      /*
       action={
         onOpenBilling ? (
           <Button
@@ -214,6 +215,7 @@ export function RechargeFormCard({
           </Button>
         ) : null
       }
+      */
       contentClassName='space-y-4 sm:space-y-6'
     >
       {/* Online Topup Section */}
@@ -545,7 +547,7 @@ export function RechargeFormCard({
               {t('Redeem')}
             </Button>
           </div>
-          {topupLink && (
+          {false && topupLink && (
             <p className='text-muted-foreground text-xs'>
               {t('Need a redemption code?')}{' '}
               <a

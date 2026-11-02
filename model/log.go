@@ -88,6 +88,7 @@ const (
 	LogTypeError   = 5
 	LogTypeRefund  = 6
 	LogTypeLogin   = 7
+	LogTypeReset   = 8
 )
 
 func ensureLogRequestId(log *Log) {
@@ -220,7 +221,29 @@ func RecordLoginLog(userId, actorRole int, username string, content string, ip s
 	RecordAuditLog(c, AuditLog{UserId: userId, Username: username, ActorRole: actorRole, Category: AuditCategoryLogin, Action: action, Content: content, Ip: ip, Other: other, Success: true})
 }
 
-// RecordOperationAuditLog writes new operation/security events to the audit table.
+// RecordUpdatePasswordLog 记录用户修复密码
+func RecordUpdatePasswordLog(userId int, username string, content string, ip string, action string, params map[string]interface{}, other AuditOther) {
+	other.Op = &AuditOperation{Action: action, Params: params}
+	data, err := common.Marshal(other)
+	if err != nil {
+		common.SysError(common.LogText("failed to encode log admin info: %s", err.Error()))
+		return
+	}
+	log := &Log{
+		UserId:    userId,
+		Username:  username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      LogTypeReset,
+		Content:   content,
+		Ip:        ip,
+		Other:     string(data),
+	}
+	if err := createLog(log); err != nil {
+		common.SysLog("failed to record login log: " + err.Error())
+	}
+}
+
+// RecordOperationAuditLog 记录管理/高危操作审计日志（type=LogTypeManage）。
 // logUserId 为日志归属者，管理审计日志应归属实际操作者；目标资源/用户放入
 // action params。username 内部按 logUserId 查询。content 为英文兜底文本（供导出使用）。
 // action+params 写入 Other.op，供前端本地化渲染（普通用户可见，不含敏感信息）。

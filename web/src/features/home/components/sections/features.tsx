@@ -179,7 +179,7 @@ export function Features(_props: FeaturesProps) {
     },
   ]
 
-  return (
+  return (false &&
     <section className='relative z-10 px-6 py-24 md:py-32'>
       <div className='mx-auto max-w-6xl'>
         <AnimateInView className='mb-16 max-w-lg'>

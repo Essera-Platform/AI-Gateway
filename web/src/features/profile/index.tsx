@@ -78,7 +78,7 @@ export function Profile() {
                     turnstileSiteKey={turnstileSiteKey}
                   />
                 )}
-                {canConfigureSidebar && <SidebarModulesCard />}
+                {false && canConfigureSidebar && <SidebarModulesCard />}
               </div>
             </div>
           </CardStaggerItem>

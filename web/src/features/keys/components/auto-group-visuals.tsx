@@ -20,7 +20,9 @@ import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { GroupBadge, GroupMultiplierBadge } from '@/components/group-badge'
+import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 export type GroupRatio = number | string | null | undefined
 
@@ -79,7 +81,9 @@ type GroupRatioBadgeProps = {
 
 export function GroupRatioBadge(props: GroupRatioBadgeProps) {
   const { t } = useTranslation()
+  const isSuperAdmin = useAuthStore.getState().auth.user?.role === ROLE.SUPER_ADMIN
 
+  if (!isSuperAdmin) return null
   if (props.ratio === undefined || props.ratio === null || props.ratio === '') {
     return null
   }

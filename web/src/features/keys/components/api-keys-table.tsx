@@ -20,7 +20,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import { flexRender, type Table as TanstackTable } from '@tanstack/react-table'
 import { Database } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import {useEffect, useMemo, useState} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -63,6 +63,7 @@ import { useApiKeysColumns } from './api-keys-columns'
 import { useApiKeys } from './api-keys-provider'
 import { DataTableBulkActions } from './data-table-bulk-actions'
 import { DataTableRowActions } from './data-table-row-actions'
+import { getUserGroups } from '@/lib/api'
 
 const route = getRouteApi('/_authenticated/keys/')
 const API_KEYS_COLUMN_VISIBILITY_STORAGE_KEY = 'api-keys:column-visibility'
@@ -321,6 +322,30 @@ export function ApiKeysTable() {
     ensurePageInRange,
   })
 
+
+  // Fetch groups for filter
+  const { data: groupsData } = useQuery({
+    queryKey: ['desc'],
+    queryFn: getUserGroups,
+  })
+
+  const groupOptions = useMemo(() => {
+    const data = groupsData?.data;
+    if (!data) return [];
+    // 将对象转换为数组，每个元素包含分组名和描述
+    return Object.entries(data).map(([groupName, groupInfo]) => ({
+      label: groupInfo.desc || groupName, // 显示描述，如果没有则用分组名
+      value: groupName,                   // 用分组名作为实际值
+    }));
+  }, [groupsData]);
+
+  const groupFilterOptions = [
+    ...groupOptions.map((option) => ({
+      ...option,
+      label: option.label,
+    })),
+  ]
+
   const columnVisibility = table.getState().columnVisibility
   useEffect(() => {
     // Restore the dates hidden by the previous default when adopting the combined time column.
@@ -367,6 +392,12 @@ export function ApiKeysTable() {
             columnId: 'status',
             title: t('Status'),
             options: API_KEY_STATUS_OPTIONS,
+            singleSelect: true,
+          },
+          {
+            columnId: 'group',
+            title: t('Group'),
+            options: groupFilterOptions,
             singleSelect: true,
           },
         ],

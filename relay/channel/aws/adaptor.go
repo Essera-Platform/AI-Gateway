@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
+	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -25,12 +26,23 @@ const (
 	ClientModeAKSK
 )
 
+type ModelType int
+
+const (
+	ModelTypeClaude ModelType = iota
+	ModelTypeNova
+	ModelTypeConverse
+	ModelTypeMantle
+)
+
 type Adaptor struct {
-	ClientMode ClientMode
-	AwsClient  *bedrockruntime.Client
-	AwsModelId string
-	AwsReq     any
-	IsNova     bool
+	ClientMode  ClientMode
+	AwsClient   *bedrockruntime.Client
+	AwsModelId  string
+	AwsReq      any
+	ConverseReq *NovaRequest
+	ModelType   ModelType
+	IsNova      bool
 }
 
 func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dto.GeminiChatRequest) (any, error) {
@@ -122,14 +134,31 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	if request == nil {
 		return nil, errors.New("request is nil")
 	}
-	// 检查是否为Nova模型
+	// 对模型级别的 max_tokens 进行截断（适用于所有路径）
+	capMaxTokensInRequest(request, getAwsModelID(request.Model))
+
+	// Gemma 4 走 bedrock-mantle 的 OpenAI 兼容端点，保持 Chat Completions 格式，不做 Converse 转换
+	if mappedModel := getAwsModelID(request.Model); isMantleModel(mappedModel) {
+		a.ModelType = ModelTypeMantle
+		request.Model = mappedModel
+		info.UpstreamModelName = mappedModel
+		return request, nil
+	}
+	if isConverseModel(request.Model) {
+		a.ModelType = ModelTypeConverse
+		converseReq := convertToNovaRequest(request)
+		converseReq.SchemaVersion = ""
+		a.ConverseReq = converseReq
+		return converseReq, nil
+	}
 	if isNovaModel(request.Model) {
+		a.ModelType = ModelTypeNova
 		novaReq := convertToNovaRequest(request)
-		a.IsNova = true
+		a.ConverseReq = novaReq
 		return novaReq, nil
 	}
 
-	// 原有的Claude模型处理逻辑
+	a.ModelType = ModelTypeClaude
 	result, err := service.ConvertRequest(c, info, types.RelayFormatClaude, request)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to convert openai request to claude request")
@@ -157,21 +186,8 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
-	switch info.ChannelOtherSettings.AwsApiType {
-	case dto.AwsApiTypeMantle:
-		req, err := a.newMantleRequest(c, info, requestBody)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := channel.DoRequest(c, req, info)
-		if err != nil {
-			return nil, newAwsInvokeError(c.Request.Context(), err, "Mantle Messages")
-		}
-		return resp, nil
-	case "", dto.AwsApiTypeInvokeModel:
-		// Unconfigured channels retain the existing InvokeModel behavior.
-	default:
-		return nil, errors.New("invalid AWS API type")
+	if a.ModelType == ModelTypeMantle {
+		return doMantleRequest(c, info, requestBody)
 	}
 	if a.ClientMode == ClientModeApiKey {
 		return channel.DoApiRequest(a, c, info, requestBody)
@@ -181,13 +197,28 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
-	if info.ChannelOtherSettings.AwsApiType == dto.AwsApiTypeMantle || a.ClientMode == ClientModeApiKey {
+	if a.ModelType == ModelTypeMantle {
+		openaiAdaptor := openai.Adaptor{}
+		return openaiAdaptor.DoResponse(c, resp, info)
+	}
+	if a.ClientMode == ClientModeApiKey {
 		claudeAdaptor := claude.Adaptor{}
 		usage, err = claudeAdaptor.DoResponse(c, resp, info)
 	} else {
-		if a.IsNova {
-			err, usage = handleNovaRequest(c, info, a)
-		} else {
+		switch a.ModelType {
+		case ModelTypeConverse:
+			if info.IsStream {
+				err, usage = gemmaStreamHandler(c, info, a)
+			} else {
+				err, usage = handleGemmaRequest(c, info, a)
+			}
+		case ModelTypeNova:
+			if info.IsStream {
+				err, usage = awsStreamHandler(c, info, a)
+			} else {
+				err, usage = handleNovaRequest(c, info, a)
+			}
+		default:
 			if info.IsStream {
 				err, usage = awsStreamHandler(c, info, a)
 			} else {

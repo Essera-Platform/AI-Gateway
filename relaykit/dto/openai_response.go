@@ -38,6 +38,12 @@ type OpenAITextResponseChoice struct {
 	FinishReason string `json:"finish_reason"`
 }
 
+type OpenAIStreamResponseChoice struct {
+	Index        int                                      `json:"index"`
+	Delta        ChatCompletionsStreamResponseChoiceDelta `json:"delta"`
+	FinishReason *string                                  `json:"finish_reason"`
+}
+
 type OpenAITextResponse struct {
 	Id      string                     `json:"id"`
 	Model   string                     `json:"model"`
@@ -45,6 +51,16 @@ type OpenAITextResponse struct {
 	Created any                        `json:"created"`
 	Choices []OpenAITextResponseChoice `json:"choices"`
 	Error   any                        `json:"error,omitempty"`
+	Usage   `json:"usage"`
+}
+
+type OpenAIStreamResponse struct {
+	Id      string                       `json:"id"`
+	Model   string                       `json:"model"`
+	Object  string                       `json:"object"`
+	Created any                          `json:"created"`
+	Choices []OpenAIStreamResponseChoice `json:"choices"`
+	Error   any                          `json:"error,omitempty"`
 	Usage   `json:"usage"`
 }
 

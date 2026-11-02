@@ -19,7 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { StatusBadge, type StatusBadgeProps } from './status-badge'
 import { Badge } from './ui/badge'
@@ -63,6 +65,16 @@ type GroupBadgeProps = Omit<
   ratio?: number | null
   ratioLabel?: string
   containerClassName?: string
+}
+
+function getGroupRatioClassName(ratio: number): string {
+  if (ratio > 1) {
+    return 'bg-warning/10 text-warning'
+  }
+  if (ratio < 1) {
+    return 'bg-info/10 text-info'
+  }
+  return 'bg-muted text-muted-foreground'
 }
 
 function getGroupLabel(params: {
@@ -115,7 +127,9 @@ export function GroupBadge(props: GroupBadgeProps) {
     />
   )
 
-  if (ratio == null && !ratioLabel) {
+  const isSuperAdmin = useAuthStore.getState().auth.user?.role === ROLE.SUPER_ADMIN
+
+  if ((ratio == null && !ratioLabel) || !isSuperAdmin) {
     return badge
   }
 

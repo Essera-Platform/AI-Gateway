@@ -125,6 +125,24 @@ func loginMethodFromContext(c *gin.Context) string {
 	}
 }
 
+// recordUpdatePassword 记录用户修改密码
+func recordUpdatePassword(user *model.User, c *gin.Context) {
+	method := loginMethodFromContext(c)
+	ip := c.ClientIP()
+	extra := model.AuditOther{
+		LoginMethod: method,
+		UserAgent:   c.Request.UserAgent(),
+	}
+	content := "修改密码"
+	params := map[string]any{
+		"method": method,
+	}
+	if verifiedMethod := c.GetString("login_verification_method"); verifiedMethod != "" {
+		params["verification_method"] = verifiedMethod
+	}
+	model.RecordUpdatePasswordLog(user.Id, user.Username, content, ip, "update password", params, extra)
+}
+
 // recordLoginAudit 记录登录成功审计日志（对所有用户启用，仅记录成功，不记录失败）。
 func recordLoginAudit(user *model.User, c *gin.Context) {
 	method := loginMethodFromContext(c)
@@ -906,6 +924,7 @@ func UpdateSelf(c *gin.Context) {
 			writeSecurityOperationError(c, err)
 			return
 		}
+		recordUpdatePassword(&cleanUser, c)
 		data := authRotationData(bundle)
 		data["has_password"] = true
 		data["notification_warning"] = notificationFailed
