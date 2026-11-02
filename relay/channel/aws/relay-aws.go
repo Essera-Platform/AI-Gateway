@@ -45,6 +45,78 @@ const (
 	mantleDefaultRegion       = "us-east-1"
 )
 
+var (
+	awsCfg        aws.Config
+	cfgLoaded     bool
+	cfgMutex      sync.RWMutex
+	bedrockClient *bedrockruntime.Client
+	clientLoaded  bool
+	clientMutex   sync.RWMutex
+)
+
+func GetAWSConfig() (aws.Config, error) {
+	// 快速路径：先加读锁检查是否已经加载成功
+	cfgMutex.RLock()
+	if cfgLoaded {
+		cfg := awsCfg
+		cfgMutex.RUnlock()
+		return cfg, nil
+	}
+	cfgMutex.RUnlock()
+
+	// 慢速路径：未加载成功，加写锁进行初始化（此时其他协程会阻塞等待）
+	cfgMutex.Lock()
+	defer cfgMutex.Unlock()
+
+	// 双重检查：防止在等待写锁期间，其他协程已经初始化成功了
+	if cfgLoaded {
+		return awsCfg, nil
+	}
+
+	// 执行加载
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cfg, err := config.LoadDefaultConfig(ctx,
+		config.WithSharedConfigProfile(mantleSharedProfile),
+	)
+	if err != nil {
+		// 失败：直接返回错误
+		return aws.Config{}, err
+	}
+
+	// 成功：保存值并标记为已加载
+	awsCfg = cfg
+	cfgLoaded = true
+	return awsCfg, nil
+}
+
+func GetBedrockClient(cfg aws.Config, httpClient *http.Client) (*bedrockruntime.Client, error) {
+	clientMutex.RLock()
+	if clientLoaded {
+		c := bedrockClient
+		clientMutex.RUnlock()
+		return c, nil
+	}
+	clientMutex.RUnlock()
+
+	clientMutex.Lock()
+	defer clientMutex.Unlock()
+
+	if clientLoaded {
+		return bedrockClient, nil
+	}
+
+	client := bedrockruntime.NewFromConfig(cfg, func(o *bedrockruntime.Options) {
+		o.HTTPClient = httpClient
+	})
+
+	bedrockClient = client
+	clientLoaded = true
+
+	return bedrockClient, nil
+}
+
 // doMantleRequest 通过裸 HTTP 调用 bedrock-mantle 的 OpenAI 兼容端点。
 // 认证优先级：共享 profile(credential_process/Roles Anywhere) -> 静态 AK/SK -> Bearer API Key。
 func doMantleRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
@@ -60,30 +132,26 @@ func doMantleRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io
 	var creds aws.Credentials
 	var bearerToken string
 
-	// 1. 优先使用共享配置 profile（与 newAwsClient 一致，支持 IAM Roles Anywhere 临时凭证）
-	if cfg, cfgErr := config.LoadDefaultConfig(ctx, config.WithSharedConfigProfile(mantleSharedProfile)); cfgErr == nil {
-		region = awsSecret[0] // profile 模式下 info.ApiKey 存放 region
-		if region == "" {
-			region = cfg.Region
-		}
-		creds, err = cfg.Credentials.Retrieve(ctx)
+	// 优先从 info.ApiKey 解析
+	switch len(awsSecret) {
+	case 2: // <api-key>|<region>
+		bearerToken = awsSecret[0]
+		region = awsSecret[1]
+	case 3: // <ak>|<sk>|<region>
+		creds, err = credentials.NewStaticCredentialsProvider(awsSecret[0], awsSecret[1], "").Retrieve(ctx)
 		if err != nil {
-			return nil, errors.Wrap(err, "retrieve credentials from shared config profile for mantle")
+			return nil, errors.Wrap(err, "retrieve static credentials for mantle")
 		}
-	} else {
-		// 2. 回退：从 info.ApiKey 解析
-		switch len(awsSecret) {
-		case 2: // <api-key>|<region>
-			bearerToken = awsSecret[0]
-			region = awsSecret[1]
-		case 3: // <ak>|<sk>|<region>
-			creds, err = credentials.NewStaticCredentialsProvider(awsSecret[0], awsSecret[1], "").Retrieve(ctx)
-			if err != nil {
-				return nil, errors.Wrap(err, "retrieve static credentials for mantle")
-			}
-			region = awsSecret[2]
-		default:
+		region = awsSecret[2]
+	default:
+		cfg, err := GetAWSConfig()
+		if err != nil {
 			return nil, errors.New("invalid aws key for mantle, expect shared profile, <api-key>|<region> or <ak>|<sk>|<region>")
+		} else {
+			creds, err = cfg.Credentials.Retrieve(ctx)
+			if err != nil {
+				return nil, errors.Wrap(err, "retrieve credentials from shared config profile for mantle")
+			}
 		}
 	}
 
@@ -159,78 +227,6 @@ func stopReasonClaude2OpenAI(reason string) string {
 	return relayconvert.StopReasonClaudeToOpenAI(reason)
 }
 
-var (
-	awsCfg        aws.Config
-	cfgLoaded     bool
-	cfgMutex      sync.RWMutex
-	bedrockClient *bedrockruntime.Client
-	clientLoaded  bool
-	clientMutex   sync.RWMutex
-)
-
-func GetAWSConfig() (aws.Config, error) {
-	// 快速路径：先加读锁检查是否已经加载成功
-	cfgMutex.RLock()
-	if cfgLoaded {
-		cfg := awsCfg
-		cfgMutex.RUnlock()
-		return cfg, nil
-	}
-	cfgMutex.RUnlock()
-
-	// 慢速路径：未加载成功，加写锁进行初始化（此时其他协程会阻塞等待）
-	cfgMutex.Lock()
-	defer cfgMutex.Unlock()
-
-	// 双重检查：防止在等待写锁期间，其他协程已经初始化成功了
-	if cfgLoaded {
-		return awsCfg, nil
-	}
-
-	// 执行加载
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	cfg, err := config.LoadDefaultConfig(ctx,
-		config.WithSharedConfigProfile("bedrock-anywhere"),
-	)
-	if err != nil {
-		// 失败：直接返回错误
-		return aws.Config{}, err
-	}
-
-	// 成功：保存值并标记为已加载
-	awsCfg = cfg
-	cfgLoaded = true
-	return awsCfg, nil
-}
-
-func GetBedrockClient(cfg aws.Config, httpClient *http.Client) (*bedrockruntime.Client, error) {
-	clientMutex.RLock()
-	if clientLoaded {
-		c := bedrockClient
-		clientMutex.RUnlock()
-		return c, nil
-	}
-	clientMutex.RUnlock()
-
-	clientMutex.Lock()
-	defer clientMutex.Unlock()
-
-	if clientLoaded {
-		return bedrockClient, nil
-	}
-
-	client := bedrockruntime.NewFromConfig(cfg, func(o *bedrockruntime.Options) {
-		o.HTTPClient = httpClient
-	})
-
-	bedrockClient = client
-	clientLoaded = true
-
-	return bedrockClient, nil
-}
-
 func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.Client, error) {
 	httpClient, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
 	if err != nil {
@@ -239,13 +235,6 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 
 	awsSecret := strings.Split(info.ApiKey, "|")
 	var client *bedrockruntime.Client
-	cfg, err := GetAWSConfig()
-	if err == nil {
-		client, err = GetBedrockClient(cfg, httpClient)
-		if err == nil {
-			return client, nil
-		}
-	}
 	switch len(awsSecret) {
 	case 2:
 		apiKey := awsSecret[0]
@@ -265,6 +254,13 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 			HTTPClient:  httpClient,
 		})
 	default:
+		cfg, err := GetAWSConfig()
+		if err == nil {
+			client, err = GetBedrockClient(cfg, httpClient)
+			if err == nil {
+				return client, nil
+			}
+		}
 		return nil, errors.New("invalid aws secret key")
 	}
 
