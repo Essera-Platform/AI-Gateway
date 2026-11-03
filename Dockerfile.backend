@@ -15,8 +15,10 @@ COPY . .
 RUN mkdir -p web/dist && printf '%s\n' '<!doctype html><title>new-api backend</title>' > web/dist/index.html
 
 ARG APP_VERSION=dev
+# A restored build layer does not guarantee that its module cache mount is populated.
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    go build -trimpath \
+    go mod download github.com/Calcium-Ion/moejs \
+    && go build -trimpath \
       -pgo="$(go list -m -f '{{.Dir}}' github.com/Calcium-Ion/moejs)/default.pgo" \
       -ldflags="-s -w -X github.com/QuantumNous/new-api/common.Version=${APP_VERSION}" \
       -o /out/new-api .
