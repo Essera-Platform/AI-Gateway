@@ -1,0 +1,90 @@
+name: Frontend Dev Build and Push
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - 'web/**'
+      - 'docker/frontend/**'
+      - 'Dockerfile.frontend'
+      - '.dockerignore'
+      - 'VERSION'
+      - 'LICENSE'
+      - 'NOTICE'
+      - 'THIRD-PARTY-LICENSES.md'
+      - '.github/workflows/frontend-*.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-dev-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  ECR_REPOSITORY: ${{ vars.FRONTEND_ECR_REPOSITORY || 'essera-ai-gateway-frontend' }}
+  IMAGE_TAG_PREFIX: ${{ vars.IMAGE_TAG_PREFIX || 'dev01' }}
+
+jobs:
+  validate:
+    if: github.ref == 'refs/heads/dev'
+    uses: ./.github/workflows/frontend-pr-validation.yml
+
+  build-and-push:
+    name: Publish frontend dev image to ECR
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Check publish configuration
+        env:
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          if [ -z "$AWS_DEPLOY_ROLE_ARN" ]; then
+            echo '::error::Set the AWS_DEPLOY_ROLE_ARN repository variable before publishing frontend images.'
+            exit 1
+          fi
+      - name: Resolve image tag
+        id: version
+        shell: bash
+        run: |
+          image_tag="${IMAGE_TAG_PREFIX}-${GITHUB_SHA::12}-r${GITHUB_RUN_NUMBER}-a${GITHUB_RUN_ATTEMPT}"
+          echo "image_tag=$image_tag" >> "$GITHUB_OUTPUT"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Build and push frontend image
+        id: image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: Dockerfile.frontend
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.image_tag }}
+          build-args: APP_VERSION=${{ steps.version.outputs.image_tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+      - name: Image summary
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.image_tag }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          echo "Frontend image: $IMAGE" >> "$GITHUB_STEP_SUMMARY"
+          echo "Digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
