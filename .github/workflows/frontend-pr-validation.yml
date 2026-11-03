@@ -74,3 +74,4 @@ jobs:
           curl --fail http://127.0.0.1:8080/api/status | jq -e '.success == true'
           curl --fail http://127.0.0.1:8080/v1/models | jq -e '.object == "list"'
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/assets/missing.js)" = 404
+
