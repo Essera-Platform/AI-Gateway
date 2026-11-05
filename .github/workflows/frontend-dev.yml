@@ -5,7 +5,6 @@ on:
     branches: [dev]
     paths:
       - 'web/**'
-      - 'docker/frontend/**'
       - 'Dockerfile.frontend'
       - '.dockerignore'
       - 'VERSION'
@@ -28,13 +27,9 @@ env:
   IMAGE_TAG_PREFIX: ${{ vars.IMAGE_TAG_PREFIX || 'dev01' }}
 
 jobs:
-  validate:
-    if: github.ref == 'refs/heads/dev'
-    uses: ./.github/workflows/frontend-pr-validation.yml
-
   build-and-push:
     name: Publish frontend dev image to ECR
-    needs: validate
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

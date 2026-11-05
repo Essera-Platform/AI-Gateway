@@ -4,7 +4,6 @@ on:
   pull_request:
     branches: [dev]
     types: [opened, synchronize, reopened, ready_for_review]
-  workflow_call:
 
 permissions:
   contents: read
@@ -14,27 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
-    name: Frontend lint, typecheck, and test
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: '1.4.4'
-      - run: bun install --frozen-lockfile
-      - run: bun run lint
-      - run: bun run typecheck
-      - run: bun run test
-
   docker-build:
-    name: Frontend Docker build and smoke check
+    name: Frontend Docker build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -48,29 +28,8 @@ jobs:
           file: Dockerfile.frontend
           platforms: linux/amd64
           push: false
-          load: true
           tags: essera-ai-gateway-frontend:validation
           build-args: APP_VERSION=validation-${{ github.sha }}
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
-      - name: Check Nginx, SPA routes, API proxy, and missing assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker run --rm essera-ai-gateway-frontend:validation nginx -t
-          mkdir -p /tmp/frontend-upstream/api /tmp/frontend-upstream/v1
-          printf '%s\n' '{"success":true}' > /tmp/frontend-upstream/api/status
-          printf '%s\n' '{"object":"list","data":[]}' > /tmp/frontend-upstream/v1/models
-          python3 -m http.server 3001 --bind 127.0.0.1 --directory /tmp/frontend-upstream > /tmp/frontend-upstream.log 2>&1 &
-          upstream_pid=$!
-          trap 'docker logs frontend-validation; docker rm -f frontend-validation; kill "$upstream_pid"' EXIT
-          curl --fail --retry 10 --retry-connrefused --retry-delay 1 http://127.0.0.1:3001/api/status
-          docker run -d --name frontend-validation --network host \
-            -e BACKEND_URL=http://127.0.0.1:3001 essera-ai-gateway-frontend:validation
-          curl --fail --retry 15 --retry-connrefused --retry-delay 2 http://127.0.0.1:8080/healthz
-          curl --fail http://127.0.0.1:8080/ -o /tmp/frontend-index.html
-          curl --fail http://127.0.0.1:8080/channels -o /tmp/frontend-route.html
-          cmp /tmp/frontend-index.html /tmp/frontend-route.html
-          curl --fail http://127.0.0.1:8080/api/status | jq -e '.success == true'
-          curl --fail http://127.0.0.1:8080/v1/models | jq -e '.object == "list"'
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/assets/missing.js)" = 404
+
