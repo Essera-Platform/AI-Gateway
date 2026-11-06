@@ -1,4 +1,4 @@
-name: Backend Dev Build and Push
+name: Backend Dev Build and Deploy
 
 on:
   push:
@@ -46,14 +46,17 @@ concurrency:
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   ECR_REPOSITORY: ${{ vars.BACKEND_ECR_REPOSITORY || 'essera-ai-gateway-backend' }}
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER || 'essera-dev' }}
+  ECS_SERVICE: ${{ vars.BACKEND_ECS_SERVICE || 'essera-dev-ai-gateway-backend' }}
+  ECS_CONTAINER: ${{ vars.BACKEND_ECS_CONTAINER || 'essera-dev-ai-gateway-backend' }}
   IMAGE_TAG_PREFIX: ${{ vars.IMAGE_TAG_PREFIX || 'dev01' }}
 
 jobs:
-  build-and-push:
-    name: Publish backend dev image to ECR
+  build-and-deploy:
+    name: Build and deploy backend to dev ECS
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
@@ -61,12 +64,12 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - name: Check publish configuration
+      - name: Check deployment configuration
         env:
           AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
         run: |
           if [ -z "$AWS_DEPLOY_ROLE_ARN" ]; then
-            echo '::error::Set the AWS_DEPLOY_ROLE_ARN repository variable before publishing backend images.'
+            echo '::error::Set the AWS_DEPLOY_ROLE_ARN repository variable before building and deploying backend.'
             exit 1
           fi
       - name: Resolve image tag
@@ -79,6 +82,7 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: '212626318832'
       - name: Login to Amazon ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -98,10 +102,88 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
-      - name: Image summary
+      - name: Read current ECS service task definition
+        id: ecs-service
+        shell: bash
+        run: |
+          set -euo pipefail
+          service_file="$RUNNER_TEMP/backend-service.json"
+          aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --output json > "$service_file"
+
+          if ! jq -e '
+            (.failures | length) == 0 and
+            (.services | length) == 1 and
+            .services[0].status == "ACTIVE" and
+            .services[0].deploymentController.type == "ECS" and
+            .services[0].desiredCount > 0
+          ' "$service_file" > /dev/null; then
+            echo "::error::Expected an active ECS rolling-deployment service with desiredCount > 0: $ECS_CLUSTER/$ECS_SERVICE. Provision or scale the service before deploying."
+            exit 1
+          fi
+
+          task_definition_arn="$(jq -er '.services[0].taskDefinition // empty' "$service_file")"
+          echo "task_definition_arn=$task_definition_arn" >> "$GITHUB_OUTPUT"
+      - name: Render task definition with the published image digest
+        id: render-service
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition-arn: ${{ steps.ecs-service.outputs.task_definition_arn }}
+          container-name: ${{ env.ECS_CONTAINER }}
+          image: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}@${{ steps.image.outputs.digest }}
+      - name: Deploy backend to ECS
+        id: deploy
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-service.outputs.task-definition }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          service: ${{ env.ECS_SERVICE }}
+          wait-for-service-stability: true
+          wait-for-minutes: 20
+          wait-max-delay-seconds: 15
+      - name: Verify the deployed task definition
+        shell: bash
+        env:
+          EXPECTED_TASK_DEFINITION: ${{ steps.deploy.outputs.task-definition-arn }}
+        run: |
+          set -euo pipefail
+          service_file="$RUNNER_TEMP/backend-deployed-service.json"
+          aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --output json > "$service_file"
+
+          if ! jq -e --arg expected "$EXPECTED_TASK_DEFINITION" '
+            (.failures | length) == 0 and
+            (.services | length) == 1 and
+            .services[0].taskDefinition == $expected and
+            (.services[0].deployments | length) == 1 and
+            .services[0].deployments[0].rolloutState == "COMPLETED" and
+            .services[0].desiredCount > 0 and
+            .services[0].runningCount >= .services[0].desiredCount
+          ' "$service_file" > /dev/null; then
+            echo "::error::ECS did not stabilize on $EXPECTED_TASK_DEFINITION. Check service events for a failed deployment or rollback."
+            exit 1
+          fi
+      - name: Show ECS deployment events on failure
+        if: ${{ failure() && steps.deploy.outcome != 'skipped' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query 'services[0].{status:status,desired:desiredCount,running:runningCount,pending:pendingCount,deployments:deployments[].{taskDefinition:taskDefinition,rolloutState:rolloutState,reason:rolloutStateReason},events:events[0:5]}' \
+            --output json
+      - name: Deployment summary
         env:
           IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.image_tag }}
           DIGEST: ${{ steps.image.outputs.digest }}
+          TASK_DEFINITION: ${{ steps.deploy.outputs.task-definition-arn }}
         run: |
           echo "Backend image: $IMAGE" >> "$GITHUB_STEP_SUMMARY"
           echo "Digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          echo "ECS service: $ECS_CLUSTER/$ECS_SERVICE" >> "$GITHUB_STEP_SUMMARY"
+          echo "Task definition: $TASK_DEFINITION" >> "$GITHUB_STEP_SUMMARY"
