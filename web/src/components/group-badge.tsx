@@ -67,16 +67,6 @@ type GroupBadgeProps = Omit<
   containerClassName?: string
 }
 
-function getGroupRatioClassName(ratio: number): string {
-  if (ratio > 1) {
-    return 'bg-warning/10 text-warning'
-  }
-  if (ratio < 1) {
-    return 'bg-info/10 text-info'
-  }
-  return 'bg-muted text-muted-foreground'
-}
-
 function getGroupLabel(params: {
   labelOverride?: string
   groupName?: string
@@ -127,7 +117,8 @@ export function GroupBadge(props: GroupBadgeProps) {
     />
   )
 
-  const isSuperAdmin = useAuthStore.getState().auth.user?.role === ROLE.SUPER_ADMIN
+  const isSuperAdmin =
+    useAuthStore.getState().auth.user?.role === ROLE.SUPER_ADMIN
 
   if ((ratio == null && !ratioLabel) || !isSuperAdmin) {
     return badge
